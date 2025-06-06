@@ -1,0 +1,43 @@
+name: 同步完整版 IPTV 源
+
+# 触发时机：
+# 1）按计划每天 UTC 17:00 执行 → 相当于北京时间/新加坡时间次日 01:00 自动跑一次
+# 2）也允许手动点击 “Run workflow” 立即执行
+on:
+  schedule:
+    - cron: '0 17 * * *'
+  workflow_dispatch:
+
+jobs:
+  fetch-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 从 main 分支签出仓库，并拉取完整历史（避免后面推送冲突）
+      - name: Checkout main 分支（完整历史）
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # 2. 拉取完整版 Gather.m3u 并生成 FullGather.m3u 和可选的 FullGather.txt
+      - name: 拉取完整版 Gather.m3u
+        run: |
+          # 尝试最多重试 5 次，遇到网络问题也会自动重试
+          curl -sSL --retry 5 --retry-delay 5 https://tv.iill.top/m3u/Gather -o FullGather.m3u
+
+          # 如果只是想保留视频链接，可以去掉所有 "#EXT" 注释行，生成 TXT
+          grep -v "^#EXT" FullGather.m3u > FullGather.txt || true
+
+      # 3. 使用 peaceiris/actions-gh-pages@v4 将生成的文件推送到 gh-pages 分支
+      - name: 部署到 gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          # 内置的 GITHUB_TOKEN 已经具备向远端推送的权限
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # 目标分支
+          publish_branch: gh-pages
+          # 本地要推送的目录（此处用根目录“./”，会把 FullGather.m3u、FullGather.txt 推上去）
+          publish_dir: ./
+          # 不要删除远端已有文件，仅进行增量更新
+          keep_files: true
