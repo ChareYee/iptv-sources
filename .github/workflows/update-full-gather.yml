@@ -1,64 +1,59 @@
-name: 同步完整版 IPTV 源（通过 NoobIPTV.sh）
+name: 同步完整版 IPTV 源（无交互）
 
-# 定时触发：每天 UTC 17:00 → 相当于北京时间/新加坡时间 01:00
-# 也支持手动触发（用于测试）
+# 定时触发：每天 UTC 17:00 → 北京/新加坡时间 01:00
+# 支持手动触发以便测试
 on:
   schedule:
     - cron: '0 17 * * *'
   workflow_dispatch:
 
 jobs:
-  fetch-and-deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 签出当前仓库（iptv-sources）到 Runner
+      # 1. 签出当前仓库（含完整历史），以便后面能推送到 gh-pages
       - name: Checkout this repository (完整历史)
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
-      # 2. 克隆 YanG-1989/m3u 仓库到子目录 m3u-repo
-      - name: Checkout m3u generator repository
+      # 2. 克隆上游 m3u 仓库到工作区子目录 m3u-repo，仅需最新代码即可
+      - name: Checkout YanG-1989/m3u 仓库
         uses: actions/checkout@v4
         with:
-          # 注意：这里的 repository 要改成 YanG-1989/m3u
-          # 这样会把对方仓库签出到本地 m3u-repo 目录
           repository: YanG-1989/m3u
           path: m3u-repo
           fetch-depth: 1
 
-      # 3. 进入 m3u-repo，给脚本加执行权限并运行，让它生成 Gather.m3u
-      - name: Run NoobIPTV.sh to generate full Gather.m3u
+      # 3. 进入 m3u-repo，给 NoobIPTV.sh 授予执行权限并用 --export 模式无交互地导出完整版 Gather.m3u
+      - name: Run NoobIPTV.sh in non-interactive (--export)
         working-directory: m3u-repo
         run: |
-          # 确保脚本可执行
           chmod +x NoobIPTV.sh
 
-          # 运行脚本，让它输出完整的 Gather.m3u
-          # 如果 NoobIPTV.sh 支持带参数输出，可以加 --export 或类似
-          # 大多数版本直接执行后会在当前目录生成 Gather.m3u
-          ./NoobIPTV.sh
+          # --export 参数会让脚本直接输出完整版 M3U 到 stdout
+          # 这里把它重定向到 m3u-repo/Gather.m3u
+          ./NoobIPTV.sh --export > Gather.m3u
 
-          # （可选）调试：列一下生成目录，确认文件已生成
-          echo "m3u-repo 目录下文件："
-          ls -1
-
-      # 4. 把生成的 Gather.m3u 拷贝回到根目录，并生成纯 URL 的 TXT
-      - name: Copy Gather.m3u and optionally make TXT
-        run: |
-          # 将 m3u-repo/Gather.m3u 拷贝到工作区根目录，重命名为 FullGather.m3u
-          cp m3u-repo/Gather.m3u ./FullGather.m3u
-
-          # （可选）如果想要一个只包含流媒体 URL 的 TXT，接着执行：
-          grep -v "^#EXT" FullGather.m3u > FullGather.txt || true
-
-          # 调试输出，确认当前目录下的文件
-          echo "工作区根目录："
+          # 调试输出：确认在 m3u-repo 下确实生成了 Gather.m3u
+          echo "=== m3u-repo 目录下文件 ==="
           ls -1 .
 
-      # 5. 把根目录的 FullGather.m3u（和 FullGather.txt）推送到 gh-pages
+      # 4. 将生成的 Gather.m3u 拷贝到根目录，并生成纯 URL 的 FullGather.txt（可选）
+      - name: Copy and optionally create TXT
+        run: |
+          cp m3u-repo/Gather.m3u ./FullGather.m3u
+
+          # 如果想要一个只包含链接的 TXT 文件：
+          grep -v "^#EXT" FullGather.m3u > FullGather.txt || true
+
+          # 调试：查看根目录下是否有两个文件
+          echo "=== 根目录下文件 ==="
+          ls -1 .
+
+      # 5. 把 FullGather.m3u（和 FullGather.txt）推送到 gh-pages 分支
       - name: 部署到 gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
