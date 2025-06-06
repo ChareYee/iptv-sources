@@ -1,59 +1,100 @@
-name: 同步完整版 IPTV 源（自动选择 1）
+name: 同步完整版 IPTV 源（无交互／强制选择 1）
 
-# 定时触发：每天 UTC 17:00 → 北京/新加坡时间 01:00
-# 支持手动触发以便测试
+# 用 UTC Cron 每天 17:00 触发 → 相当于新加坡/北京时间 次日 01:00 跑一次
+# 同时保留 workflow_dispatch 供手动测试
 on:
   schedule:
     - cron: '0 17 * * *'
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  fetch-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 签出当前仓库（含完整历史），以便后面推送到 gh-pages
+      #####################################################################
+      # 1. 签出当前仓库（含完整历史），以保证 later 步骤推到 gh-pages 不会冲突
+      #####################################################################
       - name: Checkout this repository (完整历史)
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
-      # 2. 克隆 YanG-1989/m3u 仓库到工作区子目录 m3u-repo，仅需最新代码即可
-      - name: Checkout YanG-1989/m3u 仓库
+      #####################################################################
+      # 2. 签出上游的 YanG-1989/m3u 脚本仓库 到 m3u-repo 目录
+      #####################################################################
+      - name: Checkout YanG-1989/m3u repository
         uses: actions/checkout@v4
         with:
           repository: YanG-1989/m3u
           path: m3u-repo
           fetch-depth: 1
 
-      # 3. 进入 m3u-repo，给 NoobIPTV.sh 授予执行权限并自动“回车 1”让它默认选第 1 项
-      - name: Run NoobIPTV.sh with default choice 1
+      #####################################################################
+      # 3. 进入 m3u-repo，用 sed 注释掉所有交互提示，强制默认选择 1
+      #####################################################################
+      - name: Patch NoobIPTV.sh to skip interactive prompts
         working-directory: m3u-repo
         run: |
+          # 先备份脚本
+          cp NoobIPTV.sh NoobIPTV.sh.bak
+
+          # sed 规则说明：
+          # - 先把所有读取用户输入的行（read -p "请选择… "）替换成 choice=1
+          # - 再把脚本后续根据 choice 值判断的 if(if [ "$choice" == "1" ]; ...) 保留，
+          #   因为我们已经让 choice=1，脚本就会自动执行项目 1 的逻辑
+          # 
+          # 这里的正则和语法依具体脚本版本而定，如果发现没拦住全部 prompt，请根据实际脚本修改。
+          sed -i '
+            s/^ *read -p.*$/choice=1/;
+          ' NoobIPTV.sh
+
+          # 再把脚本里所有“回显菜单”或“请选择一个项目”替换掉，以免脚本打印太多无用信息
+          sed -i '
+            /请选择一个项目/d;
+            /Pixman 菜单/d;
+            /Doubebly 项目/d;
+            /Fourgtv 项目/d;
+            /Tool.*Menu/d;
+          ' NoobIPTV.sh
+
+          # 确保修改生效
+          grep -n "choice=1" NoobIPTV.sh || echo "⚠️ 警告：未找到 choice=1"
+
+          # 给脚本添加可执行权限
           chmod +x NoobIPTV.sh
 
-          # 把“1”通过管道送给脚本，让它相当于手动输入“1”后回车，再把输出重定向到 Gather.m3u
-          yes 1 | ./NoobIPTV.sh 2>&1 | tee Gather.m3u
+      #####################################################################
+      # 4. 运行“已打补丁”的 NoobIPTV.sh，让它一路默认走到第一个项目并生成 Gather.m3u
+      #####################################################################
+      - name: Run patched NoobIPTV.sh to generate full Gather.m3u
+        working-directory: m3u-repo
+        run: |
+          # 当脚本执行完毕后，最新的 Gather.m3u 会出现
+          ./NoobIPTV.sh > Gather.m3u 2>&1
 
-          # 调试输出：确认 m3u-repo 下的 Gather.m3u 已经生成
           echo "=== m3u-repo 目录下文件 ==="
           ls -1 .
 
-      # 4. 将生成的 Gather.m3u 拷贝到根目录，并生成纯 URL 的 FullGather.txt（可选）
-      - name: Copy and optionally create TXT
+      #####################################################################
+      # 5. 把生成的 Gather.m3u 拷贝到主仓库根目录，并生成纯 URL 的 TXT（可选）
+      #####################################################################
+      - name: Copy and optionally generate TXT
         run: |
+          # 拷贝到根目录并重命名
           cp m3u-repo/Gather.m3u ./FullGather.m3u
 
-          # 如果想要一个只包含链接的 TXT 文件：
-          grep -v "^#EXT" FullGather.m3u > FullGather.txt || true
+          # （可选）用 grep 过滤出所有以 http 或 https 开头的行，生成 FullGather.txt
+          grep -Eo "http[s]?://.*" FullGather.m3u > FullGather.txt || true
 
-          # 调试：查看根目录下是否有两个文件
           echo "=== 根目录下文件 ==="
           ls -1 .
 
-      # 5. 把 FullGather.m3u（和 FullGather.txt）推送到 gh-pages 分支
-      - name: 部署到 gh-pages
+      #####################################################################
+      # 6. 部署到 gh-pages 分支，以便通过 GitHub Pages 对外托管
+      #####################################################################
+      - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
