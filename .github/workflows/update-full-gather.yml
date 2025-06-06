@@ -34,7 +34,7 @@ jobs:
           chmod +x NoobIPTV.sh
 
           # 把“1”通过管道送给脚本，让它相当于手动输入“1”后回车，再把输出重定向到 Gather.m3u
-          echo "1" | ./NoobIPTV.sh > Gather.m3u 2>/dev/null
+          echo "1" | ./NoobIPTV.sh > Gather.m3u
 
           # 调试输出：确认 m3u-repo 下的 Gather.m3u 已经生成
           echo "=== m3u-repo 目录下文件 ==="
